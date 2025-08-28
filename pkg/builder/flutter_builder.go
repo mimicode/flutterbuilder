@@ -22,6 +22,7 @@ type FlutterBuilderImpl struct {
 	executor    executor.CommandExecutor
 	security    security.SecurityChecker
 	certManager types.CertificateManager
+	customArgs  map[string]interface{} // 自定义构建参数
 }
 
 // NewFlutterBuilder 创建新的Flutter构建器
@@ -35,6 +36,7 @@ func NewFlutterBuilder(platform string, iosConfig *IOSConfig, sourcePath string)
 		projectRoot: projectRoot,
 		executor:    executor.NewCommandExecutor(),
 		security:    security.NewSecurityChecker(projectRoot),
+		customArgs:  make(map[string]interface{}), // 初始化自定义参数
 	}
 
 	// 如果是iOS平台且有证书配置，创建证书管理器
@@ -188,6 +190,65 @@ func (b *FlutterBuilderImpl) PostBuildProcessing() error {
 	return nil
 }
 
+// SetCustomArgs 设置自定义构建参数
+func (b *FlutterBuilderImpl) SetCustomArgs(args map[string]interface{}) {
+	if b.customArgs == nil {
+		b.customArgs = make(map[string]interface{})
+	}
+	for k, v := range args {
+		b.customArgs[k] = v
+	}
+}
+
+// GetCustomArg 获取自定义参数值
+func (b *FlutterBuilderImpl) GetCustomArg(key string) (interface{}, bool) {
+	if b.customArgs == nil {
+		return nil, false
+	}
+	val, exists := b.customArgs[key]
+	return val, exists
+}
+
+// GetCustomArgString 获取字符串类型的自定义参数
+func (b *FlutterBuilderImpl) GetCustomArgString(key string) string {
+	if val, exists := b.GetCustomArg(key); exists {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+// GetCustomArgBool 获取布尔类型的自定义参数
+func (b *FlutterBuilderImpl) GetCustomArgBool(key string) bool {
+	if val, exists := b.GetCustomArg(key); exists {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+// GetCustomArgStringSlice 获取字符串数组类型的自定义参数
+func (b *FlutterBuilderImpl) GetCustomArgStringSlice(key string) []string {
+	if val, exists := b.GetCustomArg(key); exists {
+		if slice, ok := val.([]string); ok {
+			return slice
+		}
+		// 尝试转换 []interface{} 为 []string
+		if interfaceSlice, ok := val.([]interface{}); ok {
+			result := make([]string, len(interfaceSlice))
+			for i, v := range interfaceSlice {
+				if str, ok := v.(string); ok {
+					result[i] = str
+				}
+			}
+			return result
+		}
+	}
+	return nil
+}
+
 // 私有方法实现...
 func (b *FlutterBuilderImpl) validateEnvironment() error {
 	// 检查Flutter环境
@@ -241,12 +302,45 @@ func (b *FlutterBuilderImpl) buildAndroidAPK() error {
 	buildCmd := []string{
 		"flutter", "build", "apk",
 		"--release",
+	}
+
+	// 添加默认参数（可被自定义参数覆盖）
+	defaultArgs := []string{
 		"--obfuscate",
 		"--split-debug-info=build/debug-info",
 		"--tree-shake-icons",
 		"--target-platform", "android-arm64",
 		"--dart-define=FLUTTER_WEB_USE_SKIA=true",
 		"--dart-define=FLUTTER_WEB_AUTO_DETECT=true",
+	}
+
+	// 检查是否禁用默认参数
+	if !b.GetCustomArgBool("disable_default_args") {
+		buildCmd = append(buildCmd, defaultArgs...)
+	}
+
+	// 添加自定义参数
+	if customArgs := b.GetCustomArgStringSlice("flutter_build_args"); len(customArgs) > 0 {
+		buildCmd = append(buildCmd, customArgs...)
+	}
+
+	// 添加自定义dart-define参数
+	if dartDefines := b.GetCustomArgStringSlice("dart_defines"); len(dartDefines) > 0 {
+		for _, define := range dartDefines {
+			buildCmd = append(buildCmd, "--dart-define="+define)
+		}
+	}
+
+	// 自定义目标平台
+	if targetPlatform := b.GetCustomArgString("target_platform"); targetPlatform != "" {
+		// 移除默认的target-platform参数
+		for i := 0; i < len(buildCmd)-1; i++ {
+			if buildCmd[i] == "--target-platform" {
+				buildCmd = append(buildCmd[:i], buildCmd[i+2:]...)
+				break
+			}
+		}
+		buildCmd = append(buildCmd, "--target-platform", targetPlatform)
 	}
 
 	if err := b.executor.RunCommand(buildCmd, b.projectRoot); err != nil {
@@ -273,11 +367,32 @@ func (b *FlutterBuilderImpl) buildIOS() error {
 	buildCmd := []string{
 		"flutter", "build", "ios",
 		"--release",
+	}
+
+	// 添加默认参数（可被自定义参数覆盖）
+	defaultArgs := []string{
 		"--obfuscate",
 		"--split-debug-info=build/debug-info",
 		"--tree-shake-icons",
 		"--dart-define=FLUTTER_WEB_USE_SKIA=true",
 		"--dart-define=FLUTTER_WEB_AUTO_DETECT=true",
+	}
+
+	// 检查是否禁用默认参数
+	if !b.GetCustomArgBool("disable_default_args") {
+		buildCmd = append(buildCmd, defaultArgs...)
+	}
+
+	// 添加自定义参数
+	if customArgs := b.GetCustomArgStringSlice("flutter_build_args"); len(customArgs) > 0 {
+		buildCmd = append(buildCmd, customArgs...)
+	}
+
+	// 添加自定义dart-define参数
+	if dartDefines := b.GetCustomArgStringSlice("dart_defines"); len(dartDefines) > 0 {
+		for _, define := range dartDefines {
+			buildCmd = append(buildCmd, "--dart-define="+define)
+		}
 	}
 
 	if err := b.executor.RunCommand(buildCmd, b.projectRoot); err != nil {
@@ -309,12 +424,33 @@ func (b *FlutterBuilderImpl) buildIPA() error {
 	ipaCmd := []string{
 		"flutter", "build", "ipa",
 		"--release",
+	}
+
+	// 添加默认参数（可被自定义参数覆盖）
+	defaultArgs := []string{
 		"--obfuscate",
 		"--split-debug-info=build/debug-info",
 		"--tree-shake-icons",
 		"--dart-define=FLUTTER_WEB_USE_SKIA=true",
 		"--dart-define=FLUTTER_WEB_AUTO_DETECT=true",
 		"--export-options-plist", exportOptionsPlist,
+	}
+
+	// 检查是否禁用默认参数
+	if !b.GetCustomArgBool("disable_default_args") {
+		ipaCmd = append(ipaCmd, defaultArgs...)
+	}
+
+	// 添加自定义参数
+	if customArgs := b.GetCustomArgStringSlice("flutter_build_args"); len(customArgs) > 0 {
+		ipaCmd = append(ipaCmd, customArgs...)
+	}
+
+	// 添加自定义dart-define参数
+	if dartDefines := b.GetCustomArgStringSlice("dart_defines"); len(dartDefines) > 0 {
+		for _, define := range dartDefines {
+			ipaCmd = append(ipaCmd, "--dart-define="+define)
+		}
 	}
 
 	if err := b.executor.RunCommand(ipaCmd, b.projectRoot); err != nil {

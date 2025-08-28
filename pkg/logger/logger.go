@@ -19,12 +19,25 @@ const (
 	ErrorLevel
 )
 
+// ExternalLogger 外部日志接口
+type ExternalLogger interface {
+	Debug(format string, args ...interface{})
+	Info(format string, args ...interface{})
+	Warning(format string, args ...interface{})
+	Error(format string, args ...interface{})
+	Success(format string, args ...interface{})
+	Header(title string)
+	Println(args ...interface{})
+	Printf(format string, args ...interface{})
+}
+
 var (
-	currentLevel  = InfoLevel
-	debugLogger   *log.Logger
-	infoLogger    *log.Logger
-	warningLogger *log.Logger
-	errorLogger   *log.Logger
+	currentLevel   = InfoLevel
+	debugLogger    *log.Logger
+	infoLogger     *log.Logger
+	warningLogger  *log.Logger
+	errorLogger    *log.Logger
+	externalLogger ExternalLogger // 外部日志接口
 )
 
 // 初始化日志记录器
@@ -40,8 +53,23 @@ func SetLevel(level LogLevel) {
 	currentLevel = level
 }
 
+// SetExternalLogger 设置外部日志接口
+func SetExternalLogger(logger ExternalLogger) {
+	externalLogger = logger
+}
+
+// ClearExternalLogger 清除外部日志接口
+func ClearExternalLogger() {
+	externalLogger = nil
+}
+
 // Debug 调试日志
 func Debug(format string, args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Debug(format, args...)
+		return
+	}
+
 	if currentLevel <= DebugLevel {
 		message := fmt.Sprintf(format, args...)
 		if color.NoColor {
@@ -54,6 +82,11 @@ func Debug(format string, args ...interface{}) {
 
 // Info 信息日志
 func Info(format string, args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Info(format, args...)
+		return
+	}
+
 	if currentLevel <= InfoLevel {
 		message := fmt.Sprintf(format, args...)
 		if color.NoColor {
@@ -66,6 +99,11 @@ func Info(format string, args ...interface{}) {
 
 // Warning 警告日志
 func Warning(format string, args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Warning(format, args...)
+		return
+	}
+
 	if currentLevel <= WarningLevel {
 		message := fmt.Sprintf(format, args...)
 		if color.NoColor {
@@ -78,6 +116,11 @@ func Warning(format string, args ...interface{}) {
 
 // Error 错误日志
 func Error(format string, args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Error(format, args...)
+		return
+	}
+
 	if currentLevel <= ErrorLevel {
 		message := fmt.Sprintf(format, args...)
 		if color.NoColor {
@@ -90,6 +133,11 @@ func Error(format string, args ...interface{}) {
 
 // Success 成功日志
 func Success(format string, args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Success(format, args...)
+		return
+	}
+
 	if currentLevel <= InfoLevel {
 		message := fmt.Sprintf(format, args...)
 		if color.NoColor {
@@ -102,6 +150,11 @@ func Success(format string, args ...interface{}) {
 
 // Header 标题日志
 func Header(title string) {
+	if externalLogger != nil {
+		externalLogger.Header(title)
+		return
+	}
+
 	separator := strings.Repeat("=", 50)
 	if color.NoColor {
 		fmt.Println(separator)
@@ -116,11 +169,19 @@ func Header(title string) {
 
 // Println 普通输出
 func Println(args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Println(args...)
+		return
+	}
 	fmt.Println(args...)
 }
 
 // Printf 格式化输出
 func Printf(format string, args ...interface{}) {
+	if externalLogger != nil {
+		externalLogger.Printf(format, args...)
+		return
+	}
 	fmt.Printf(format, args...)
 }
 

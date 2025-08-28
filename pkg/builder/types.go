@@ -35,6 +35,8 @@ type FlutterBuilder interface {
 	CheckSecurityConfig() error
 	Build() error
 	PostBuildProcessing() error
+	// 新增方法
+	SetCustomArgs(args map[string]interface{}) // 设置自定义构建参数
 }
 
 // CommandRunner 命令运行器接口

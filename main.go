@@ -19,8 +19,8 @@ func main() {
 	// 创建根命令
 	rootCmd := &cobra.Command{
 		Use:   "flutter-builder",
-		Short: "FFXApp Release Build Script v2.0 - 跨平台Flutter构建工具",
-		Long: `FFXApp Release Build Script v2.0
+		Short: "Flutter Release Build Script v2.0 - 跨平台Flutter构建工具",
+		Long: `Flutter Release Build Script v2.0
 
 跨平台Flutter项目构建脚本，支持iOS和Android release版本构建，
 包含代码混淆、优化和安全配置。
