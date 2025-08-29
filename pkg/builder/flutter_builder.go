@@ -138,8 +138,9 @@ func (b *FlutterBuilderImpl) RunCodeGeneration() error {
 	logger.Info("[3/6] 运行代码生成...")
 
 	// 尝试运行build_runner，如果失败则忽略
+	// 使用新的 dart run 命令替代已废弃的 flutter packages pub run
 	if err := b.executor.RunCommand([]string{
-		"flutter", "packages", "pub", "run", "build_runner",
+		"dart", "run", "build_runner",
 		"build", "--delete-conflicting-outputs",
 	}, b.projectRoot); err != nil {
 		logger.Info("跳过代码生成（build_runner未配置或不需要）")
