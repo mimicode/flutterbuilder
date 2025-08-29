@@ -117,22 +117,35 @@ func customLoggerExample() {
 func iosExample() {
 	fmt.Println("iOS 构建示例...")
 
-	// iOS 构建配置
-	iosConfig := &api.IOSConfig{
+	// 示例1: 使用证书配置构建IPA
+	fmt.Println("\n  示例1: 构建IPA文件（提供证书配置）")
+	iosConfigWithCert := &api.IOSConfig{
 		P12Cert:             "/path/to/your/cert.p12",
 		CertPassword:        "your_cert_password",
 		ProvisioningProfile: "/path/to/your/profile.mobileprovision",
-		TeamID:              "YOUR_TEAM_ID",
+		TeamID:              "YOUR_TEAM_ID", // 关键：提供TeamID表示有证书配置
 		BundleID:            "com.yourcompany.yourapp",
 	}
 
-	result, err := api.QuickBuildIOS("/path/to/your/flutter/project", iosConfig)
+	result1, err := api.QuickBuildIOS("/path/to/your/flutter/project", iosConfigWithCert)
 	if err != nil {
-		fmt.Printf("iOS 构建失败（这是预期的，因为路径不存在）: %v\n", err)
-		return
+		fmt.Printf("    IPA构建失败（这是预期的，因为路径不存在）: %v\n", err)
+	} else {
+		fmt.Printf("    IPA构建成功！输出路径: %s\n", result1.OutputPath)
 	}
 
-	fmt.Printf("iOS 构建成功！输出路径: %s\n", result.OutputPath)
+	// 示例2: 仅构建iOS项目（不提供证书配置）
+	fmt.Println("\n  示例2: 仅构建iOS项目（不提供证书配置）")
+	result2, err := api.QuickBuildIOS("/path/to/your/flutter/project", nil)
+	if err != nil {
+		fmt.Printf("    iOS构建失败（这是预期的，因为路径不存在）: %v\n", err)
+	} else {
+		fmt.Printf("    iOS构建成功！输出路径: %s\n", result2.OutputPath)
+	}
+
+	fmt.Println("\n  构建逻辑说明:")
+	fmt.Println("  - 提供TeamID: 自动构建IPA文件，返回具体文件路径")
+	fmt.Println("  - 未提供TeamID: 仅构建iOS项目，生成Runner.app")
 }
 
 // CustomLogger 自定义日志器实现

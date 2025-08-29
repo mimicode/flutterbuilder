@@ -165,3 +165,48 @@ func TestRemoveSpecificArgs(t *testing.T) {
 		t.Error("remove_default_args should be []string type")
 	}
 }
+
+// TestIOSBuildLogic 测试iOS构建逻辑
+func TestIOSBuildLogic(t *testing.T) {
+	// 测试1: 无证书配置的iOS构建
+	config1 := &BuildConfig{
+		Platform:   PlatformIOS,
+		SourcePath: "/non/existent/path",
+		IOSConfig:  nil, // 无证书配置
+	}
+
+	// 验证输出路径为 .app 文件
+	expectedPath1 := "/non/existent/path/build/ios/iphoneos/Runner.app"
+	actualPath1 := getOutputPath(config1.Platform, config1.SourcePath, config1.IOSConfig)
+	if actualPath1 != expectedPath1 {
+		t.Errorf("Expected iOS path without cert: %s, got: %s", expectedPath1, actualPath1)
+	}
+
+	// 测试2: 有证书配置的iOS构建
+	config2 := &BuildConfig{
+		Platform:   PlatformIOS,
+		SourcePath: "/non/existent/path",
+		IOSConfig: &IOSConfig{
+			TeamID: "TEST123456", // 提供TeamID表示有证书配置
+		},
+	}
+
+	// 验证输出路径为具体的IPA文件（由于文件不存在，会返回默认路径）
+	expectedPath2 := "/non/existent/path/build/ios/ipa/Runner.ipa"
+	actualPath2 := getOutputPath(config2.Platform, config2.SourcePath, config2.IOSConfig)
+	if actualPath2 != expectedPath2 {
+		t.Errorf("Expected iOS path with cert: %s, got: %s", expectedPath2, actualPath2)
+	}
+
+	// 测试3: Android构建路径保持不变
+	config3 := &BuildConfig{
+		Platform:   PlatformAPK,
+		SourcePath: "/non/existent/path",
+	}
+
+	expectedPath3 := "/non/existent/path/build/app/outputs/flutter-apk/app-release.apk"
+	actualPath3 := getOutputPath(config3.Platform, config3.SourcePath, nil)
+	if actualPath3 != expectedPath3 {
+		t.Errorf("Expected APK path: %s, got: %s", expectedPath3, actualPath3)
+	}
+}

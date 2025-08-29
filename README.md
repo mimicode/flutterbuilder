@@ -58,7 +58,8 @@ go build -o flutter-builder-linux -ldflags="-s -w" -tags="linux"
 
 #### iOS 动态证书构建
 
-```bash
+```
+# 使用动态证书构建 IPA 文件
 ./flutter-builder ios \
   --source-path /path/to/flutter/project \
   --p12-cert /path/to/cert.p12 \
@@ -66,7 +67,15 @@ go build -o flutter-builder-linux -ldflags="-s -w" -tags="linux"
   --provisioning-profile /path/to/profile.mobileprovision \
   --team-id "TEAM123456" \
   --bundle-id "com.company.app"
+
+# 仅构建 iOS 项目（不生成 IPA）
+./flutter-builder ios \
+  --source-path /path/to/flutter/project
 ```
+
+**iOS 构建逻辑说明：**
+- **提供证书配置**：自动构建 IPA 文件，输出具体的 IPA 文件路径（如 `build/ios/ipa/Runner.ipa`）
+- **未提供证书配置**：仅构建 iOS 项目，输出 Runner.app 文件，路径为 `build/ios/iphoneos/Runner.app`
 
 ### 作为Go模块引用
 
@@ -136,7 +145,7 @@ func main() {
 
 #### 自定义日志库
 
-```go
+``go
 package main
 
 import (

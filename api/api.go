@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/mimicode/flutterbuilder/pkg/builder"
@@ -152,21 +153,43 @@ func (fb *flutterBuilderImpl) Build(config *BuildConfig) (*BuildResult, error) {
 	}
 
 	// 获取输出路径
-	result.OutputPath = getOutputPath(config.Platform, config.SourcePath)
+	result.OutputPath = getOutputPath(config.Platform, config.SourcePath, config.IOSConfig)
 
 	return result, nil
 }
 
 // getOutputPath 获取构建输出路径
-func getOutputPath(platform Platform, sourcePath string) string {
+func getOutputPath(platform Platform, sourcePath string, iosConfig *IOSConfig) string {
 	switch platform {
 	case PlatformAPK:
 		return fmt.Sprintf("%s/build/app/outputs/flutter-apk/app-release.apk", sourcePath)
 	case PlatformIOS:
-		return fmt.Sprintf("%s/build/ios/iphoneos", sourcePath)
+		// 如果提供了证书配置，返回IPA文件路径；否则返回构建目录
+		if iosConfig != nil && iosConfig.TeamID != "" {
+			// 构建IPA，尝试获取实际的IPA文件路径
+			return getActualIPAPath(sourcePath)
+		} else {
+			// 仅构建iOS，返回.app文件路径
+			return fmt.Sprintf("%s/build/ios/iphoneos/Runner.app", sourcePath)
+		}
 	default:
 		return ""
 	}
+}
+
+// getActualIPAPath 获取实际生成的IPA文件路径
+func getActualIPAPath(sourcePath string) string {
+	ipaDir := fmt.Sprintf("%s/build/ios/ipa", sourcePath)
+
+	// 尝试读取目录中的IPA文件
+	if files, err := filepath.Glob(fmt.Sprintf("%s/*.ipa", ipaDir)); err == nil && len(files) > 0 {
+		// 返回找到的第一个IPA文件路径
+		return files[0]
+	}
+
+	// 如果找不到实际文件，返回默认的IPA路径格式
+	// 通常Flutter会生成以项目名命名的IPA文件
+	return fmt.Sprintf("%s/Runner.ipa", ipaDir)
 }
 
 // QuickBuild 快速构建函数（便捷方法）

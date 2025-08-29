@@ -107,7 +107,7 @@ func (b *FlutterBuilderImpl) Clean() error {
 
 	// Flutter clean
 	if err := b.executor.RunCommand([]string{"flutter", "clean"}, b.projectRoot); err != nil {
-		return fmt.Errorf("Flutter clean 执行失败: %w", err)
+		return fmt.Errorf("flutter clean 执行失败: %w", err)
 	}
 	logger.Success("Flutter clean 执行成功")
 
@@ -427,7 +427,7 @@ func (b *FlutterBuilderImpl) buildAndroidAPK() error {
 	}
 
 	if err := b.executor.RunCommand(buildCmd, b.projectRoot); err != nil {
-		return fmt.Errorf("Android构建失败: %w", err)
+		return fmt.Errorf("android构建失败: %w", err)
 	}
 
 	logger.Success("Android APK构建完成")
@@ -438,15 +438,21 @@ func (b *FlutterBuilderImpl) buildAndroidAPK() error {
 func (b *FlutterBuilderImpl) buildIOS() error {
 	logger.Info("构建iOS发布版本...")
 
-	// 设置证书（如果提供了动态证书）
-	if b.certManager != nil {
-		if err := b.certManager.SetupCertificates(); err != nil {
-			return fmt.Errorf("设置iOS证书失败: %w", err)
-		}
-		defer b.certManager.CleanupCertificates()
+	// 判断是否提供了证书配置，决定构建类型
+	if b.iosConfig != nil && b.iosConfig.TeamID != "" {
+		// 提供了证书配置，直接构建IPA
+		return b.buildIPA()
+	} else {
+		// 未提供证书配置，仅构建iOS
+		return b.buildIOSOnly()
 	}
+}
 
-	// 构建iOS项目（不直接生成IPA）
+// buildIOSOnly 仅构建iOS项目（不生成IPA）
+func (b *FlutterBuilderImpl) buildIOSOnly() error {
+	logger.Info("构建iOS发布版本...")
+
+	// 构建iOS项目（不生成IPA）
 	buildCmd := []string{
 		"flutter", "build", "ios",
 		"--release",
@@ -489,20 +495,21 @@ func (b *FlutterBuilderImpl) buildIOS() error {
 		return fmt.Errorf("iOS构建失败: %w", err)
 	}
 
-	// 如果提供了证书配置，继续生成IPA文件
-	if b.iosConfig != nil && b.iosConfig.TeamID != "" {
-		if err := b.buildIPA(); err != nil {
-			return fmt.Errorf("IPA生成失败: %w", err)
-		}
-	}
-
 	logger.Success("iOS构建完成")
 	b.showIOSBuildArtifacts()
 	return nil
 }
 
 func (b *FlutterBuilderImpl) buildIPA() error {
-	logger.Info("生成IPA文件...")
+	logger.Info("构建IPA文件...")
+
+	// 设置证书（如果提供了动态证书）
+	if b.certManager != nil {
+		if err := b.certManager.SetupCertificates(); err != nil {
+			return fmt.Errorf("设置iOS证书失败: %w", err)
+		}
+		defer b.certManager.CleanupCertificates()
+	}
 
 	// 创建导出选项plist文件
 	exportOptionsPlist, err := b.certManager.CreateExportOptionsPlist()
@@ -645,18 +652,37 @@ func (b *FlutterBuilderImpl) showAndroidBuildArtifacts() {
 }
 
 func (b *FlutterBuilderImpl) showIOSBuildArtifacts() {
-	iosBuildPath := filepath.Join(b.projectRoot, "build", "ios", "iphoneos")
-
 	logger.Println()
 	logger.Info("构建产物:")
-	logger.Printf("  位置: %s", iosBuildPath)
-	logger.Printf("  调试信息: %s/build/debug-info/", b.projectRoot)
-	logger.Println()
-	logger.Info("创建IPA文件:")
-	logger.Println("  1. 在Xcode中打开 ios/Runner.xcworkspace")
-	logger.Println("  2. 选择 'Any iOS Device' 作为目标")
-	logger.Println("  3. Product > Archive")
-	logger.Println("  4. Distribute App > App Store Connect / Ad Hoc / Enterprise")
+
+	// 根据是否有证书配置来显示不同的信息
+	if b.iosConfig != nil && b.iosConfig.TeamID != "" {
+		// 构建IPA文件
+		ipaDir := filepath.Join(b.projectRoot, "build", "ios", "ipa")
+
+		// 尝试找到实际生成的IPA文件
+		if files, err := filepath.Glob(filepath.Join(ipaDir, "*.ipa")); err == nil && len(files) > 0 {
+			logger.Printf("  IPA文件: %s", files[0])
+		} else {
+			logger.Printf("  IPA文件目录: %s", ipaDir)
+		}
+
+		logger.Printf("  调试信息: %s/build/debug-info/", b.projectRoot)
+		logger.Println()
+		logger.Success("IPA文件已生成，可直接上传到App Store Connect")
+	} else {
+		// 仅构建iOS项目
+		iosBuildPath := filepath.Join(b.projectRoot, "build", "ios", "iphoneos")
+		runnerAppPath := filepath.Join(iosBuildPath, "Runner.app")
+		logger.Printf("  Runner.app位置: %s", runnerAppPath)
+		logger.Printf("  调试信息: %s/build/debug-info/", b.projectRoot)
+		logger.Println()
+		logger.Info("创建IPA文件:")
+		logger.Println("  1. 在Xcode中打开 ios/Runner.xcworkspace")
+		logger.Println("  2. 选择 'Any iOS Device' 作为目标")
+		logger.Println("  3. Product > Archive")
+		logger.Println("  4. Distribute App > App Store Connect / Ad Hoc / Enterprise")
+	}
 }
 
 // 辅助函数（已移除getProjectRoot，现在通过参数传递项目根目录）
