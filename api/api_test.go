@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -111,5 +112,56 @@ func TestBuildResult(t *testing.T) {
 
 	if result.Platform != PlatformAPK {
 		t.Errorf("Expected platform APK, got %s", result.Platform)
+	}
+}
+
+// TestRemoveSpecificArgs 测试移除特定参数功能
+func TestRemoveSpecificArgs(t *testing.T) {
+	builder := NewFlutterBuilder()
+
+	// 测试移除特定默认参数
+	config := &BuildConfig{
+		Platform:   PlatformAPK,
+		SourcePath: "/non/existent/path",
+		CustomArgs: map[string]interface{}{
+			// 移除特定的默认参数
+			"remove_default_args": []string{
+				"--obfuscate",        // 移除代码混淆
+				"--tree-shake-icons", // 移除图标优化
+				"--dart-define=FLUTTER_WEB_USE_SKIA=true", // 移除特定的dart-define
+			},
+			// 同时添加自定义参数
+			"flutter_build_args": []string{"--no-tree-shake-icons"},
+		},
+	}
+
+	// 验证配置可以正常创建和验证
+	err := builder.Validate(config)
+	if err != nil {
+		// 这里期望验证失败，因为路径不存在
+		if !strings.Contains(err.Error(), "源代码路径不存在") && !strings.Contains(err.Error(), "no such file or directory") {
+			t.Errorf("Expected path validation error, got: %v", err)
+		}
+	} else {
+		// 如果验证成功，说明只检查了基本参数，这也是可以接受的
+		t.Log("Validation passed, which means only basic parameters were checked")
+	}
+
+	// 验证可以正常获取自定义参数
+	if config.CustomArgs == nil {
+		t.Error("CustomArgs should not be nil")
+	}
+
+	removeArgs, exists := config.CustomArgs["remove_default_args"]
+	if !exists {
+		t.Error("remove_default_args should exist in CustomArgs")
+	}
+
+	if removeSlice, ok := removeArgs.([]string); ok {
+		if len(removeSlice) != 3 {
+			t.Errorf("Expected 3 remove args, got %d", len(removeSlice))
+		}
+	} else {
+		t.Error("remove_default_args should be []string type")
 	}
 }

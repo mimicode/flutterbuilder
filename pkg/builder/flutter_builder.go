@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/mimicode/flutterbuilder/pkg/certificates"
@@ -249,6 +250,81 @@ func (b *FlutterBuilderImpl) GetCustomArgStringSlice(key string) []string {
 	return nil
 }
 
+// removeSpecificArgs 移除指定的参数
+func (b *FlutterBuilderImpl) removeSpecificArgs(args []string, removeList []string) []string {
+	if len(removeList) == 0 {
+		return args
+	}
+
+	// 创建移除列表的map以提高查找效率
+	removeMap := make(map[string]bool)
+	for _, arg := range removeList {
+		removeMap[arg] = true
+	}
+
+	result := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// 检查是否是带等号的参数（如 --dart-define=KEY=VALUE）
+		// 这个检查要先做，因为 --dart-define=xxx 不等于 --dart-define
+		if b.isParameterWithEquals(arg, removeList) {
+			continue
+		}
+
+		// 检查当前参数是否在移除列表中
+		if removeMap[arg] {
+			// 如果是带值的参数（如 --target-platform android-arm64）
+			// 也要移除下一个参数值
+			if b.isParameterWithValue(arg) && i+1 < len(args) {
+				i++ // 跳过下一个参数值
+			}
+			continue
+		}
+
+		result = append(result, arg)
+	}
+
+	return result
+}
+
+// isParameterWithValue 检查参数是否需要值（如 --target-platform）
+func (b *FlutterBuilderImpl) isParameterWithValue(arg string) bool {
+	paramsWithValue := []string{
+		"--target-platform",
+		"--split-debug-info",
+		"--export-options-plist",
+		"--flavor",
+		"--bundle-id",
+		"--build-name",
+		"--build-number",
+	}
+
+	for _, param := range paramsWithValue {
+		if arg == param {
+			return true
+		}
+	}
+	return false
+}
+
+// isParameterWithEquals 检查是否是带等号的参数（如 --dart-define=KEY=VALUE）
+func (b *FlutterBuilderImpl) isParameterWithEquals(arg string, removeList []string) bool {
+	for _, removeArg := range removeList {
+		// 如果移除列表中有 --dart-define，则移除所有以 --dart-define= 开头的参数
+		if removeArg == "--dart-define" {
+			if strings.HasPrefix(arg, "--dart-define=") {
+				return true
+			}
+		}
+		// 如果移除列表中有具体的 dart-define 参数
+		if arg == removeArg {
+			return true
+		}
+	}
+	return false
+}
+
 // 私有方法实现...
 func (b *FlutterBuilderImpl) validateEnvironment() error {
 	// 检查Flutter环境
@@ -316,7 +392,14 @@ func (b *FlutterBuilderImpl) buildAndroidAPK() error {
 
 	// 检查是否禁用默认参数
 	if !b.GetCustomArgBool("disable_default_args") {
+		// 添加默认参数
 		buildCmd = append(buildCmd, defaultArgs...)
+
+		// 移除指定的默认参数
+		if removeArgs := b.GetCustomArgStringSlice("remove_default_args"); len(removeArgs) > 0 {
+			buildCmd = b.removeSpecificArgs(buildCmd, removeArgs)
+			logger.Debug("移除指定默认参数: %v", removeArgs)
+		}
 	}
 
 	// 添加自定义参数
@@ -380,7 +463,14 @@ func (b *FlutterBuilderImpl) buildIOS() error {
 
 	// 检查是否禁用默认参数
 	if !b.GetCustomArgBool("disable_default_args") {
+		// 添加默认参数
 		buildCmd = append(buildCmd, defaultArgs...)
+
+		// 移除指定的默认参数
+		if removeArgs := b.GetCustomArgStringSlice("remove_default_args"); len(removeArgs) > 0 {
+			buildCmd = b.removeSpecificArgs(buildCmd, removeArgs)
+			logger.Debug("移除指定默认参数: %v", removeArgs)
+		}
 	}
 
 	// 添加自定义参数
@@ -438,7 +528,14 @@ func (b *FlutterBuilderImpl) buildIPA() error {
 
 	// 检查是否禁用默认参数
 	if !b.GetCustomArgBool("disable_default_args") {
+		// 添加默认参数
 		ipaCmd = append(ipaCmd, defaultArgs...)
+
+		// 移除指定的默认参数
+		if removeArgs := b.GetCustomArgStringSlice("remove_default_args"); len(removeArgs) > 0 {
+			ipaCmd = b.removeSpecificArgs(ipaCmd, removeArgs)
+			logger.Debug("移除指定默认参数: %v", removeArgs)
+		}
 	}
 
 	// 添加自定义参数

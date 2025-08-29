@@ -179,10 +179,34 @@ func main() {
 
 | 参数名 | 类型 | 说明 |
 |---------|------|------|
-| `disable_default_args` | bool | 禁用默认构建参数 |
+| `disable_default_args` | bool | 禁用所有默认构建参数 |
+| `remove_default_args` | []string | 移除指定的默认参数（新增） |
 | `flutter_build_args` | []string | 自定义Flutter构建参数 |
 | `dart_defines` | []string | 自定义Dart定义参数 |
 | `target_platform` | string | 自定义目标平台（仅Android） |
+
+#### 参数优先级说明
+
+1. **全部禁用** (`disable_default_args: true`): 不使用任何默认参数
+2. **选择性移除** (`remove_default_args`): 从默认参数中移除指定参数
+3. **添加自定义** (`flutter_build_args`): 添加新的构建参数
+
+#### 默认参数列表
+
+**Android APK 默认参数:**
+- `--obfuscate` - 代码混淆
+- `--split-debug-info=build/debug-info` - 调试信息分离
+- `--tree-shake-icons` - 图标优化
+- `--target-platform android-arm64` - 目标平台
+- `--dart-define=FLUTTER_WEB_USE_SKIA=true` - Web配置
+- `--dart-define=FLUTTER_WEB_AUTO_DETECT=true` - Web自动检测
+
+**iOS 默认参数:**
+- `--obfuscate` - 代码混淆
+- `--split-debug-info=build/debug-info` - 调试信息分离
+- `--tree-shake-icons` - 图标优化
+- `--dart-define=FLUTTER_WEB_USE_SKIA=true` - Web配置
+- `--dart-define=FLUTTER_WEB_AUTO_DETECT=true` - Web自动检测
 
 ## 项目结构
 

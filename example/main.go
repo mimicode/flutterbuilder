@@ -27,6 +27,10 @@ func main() {
 	// 示例 4: iOS 构建示例
 	fmt.Println("\n4. iOS 构建示例:")
 	iosExample()
+
+	// 示例 5: 移除特定参数示例（新功能）
+	fmt.Println("\n5. 移除特定参数示例:")
+	removeSpecificArgsExample()
 }
 
 // quickBuildExample 快速构建示例
@@ -57,6 +61,11 @@ func customArgsExample() {
 			"flutter_build_args": []string{
 				"--no-shrink",            // 禁用代码压缩
 				"--flavor", "production", // 使用 production flavor
+			},
+			// 移除特定的默认参数（新功能）
+			"remove_default_args": []string{
+				"--obfuscate",        // 移除代码混淆（用于调试）
+				"--tree-shake-icons", // 移除图标优化（保留所有图标）
 			},
 			// 自定义 Dart 定义
 			"dart_defines": []string{
@@ -161,4 +170,53 @@ func (l *CustomLogger) Println(args ...interface{}) {
 
 func (l *CustomLogger) Printf(format string, args ...interface{}) {
 	log.Printf(l.prefix+format, args...)
+}
+
+// removeSpecificArgsExample 移除特定参数示例（新功能）
+func removeSpecificArgsExample() {
+	fmt.Println("移除特定默认参数...")
+
+	builder := api.NewFlutterBuilder()
+
+	config := &api.BuildConfig{
+		Platform:   api.PlatformAPK,
+		SourcePath: "/path/to/your/flutter/project",
+		CustomArgs: map[string]interface{}{
+			// 移除特定的默认参数
+			"remove_default_args": []string{
+				"--obfuscate",        // 移除代码混淆（便于调试）
+				"--tree-shake-icons", // 移除图标优化（保留所有图标）
+				"--dart-define=FLUTTER_WEB_USE_SKIA=true", // 移除Web配置
+				"--target-platform",                       // 移除默认目标平台
+			},
+			// 添加自定义参数
+			"flutter_build_args": []string{
+				"--target-platform", "android-arm,android-arm64,android-x64", // 支持更多架构
+				"--no-tree-shake-icons", // 不优化图标
+			},
+			// 添加自定义Dart定义
+			"dart_defines": []string{
+				"DEBUG_MODE=true",        // 开启调试模式
+				"LOG_LEVEL=verbose",      // 设置日志级别
+				"ENABLE_ANALYTICS=false", // 禁用分析
+			},
+		},
+		Verbose: true, // 启用详细日志
+	}
+
+	fmt.Println("配置说明:")
+	fmt.Println("- 移除了默认的代码混淆参数")
+	fmt.Println("- 移除了默认的图标优化参数")
+	fmt.Println("- 移除了默认的Web配置参数")
+	fmt.Println("- 移除了默认的目标平台设置")
+	fmt.Println("- 添加了支持更多架构的自定义目标平台")
+	fmt.Println("- 添加了调试相关的Dart定义")
+
+	result, err := builder.Build(config)
+	if err != nil {
+		fmt.Printf("构建失败（这是预期的，因为路径不存在）: %v\n", err)
+		return
+	}
+
+	fmt.Printf("构建成功！平台: %s, 耗时: %v\n", result.Platform, result.BuildTime)
 }
