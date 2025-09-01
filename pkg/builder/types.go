@@ -3,6 +3,7 @@ package builder
 import (
 	"time"
 
+	"github.com/mimicode/flutterbuilder/pkg/hooks"
 	"github.com/mimicode/flutterbuilder/pkg/types"
 )
 
@@ -35,8 +36,15 @@ type FlutterBuilder interface {
 	CheckSecurityConfig() error
 	Build() error
 	PostBuildProcessing() error
-	// 新增方法
+	// 自定义参数方法
 	SetCustomArgs(args map[string]interface{}) // 设置自定义构建参数
+	// 钩子相关方法
+	SetHooks(hooksConfig *hooks.HooksConfig) error                        // 设置钩子配置
+	RegisterHook(hookType hooks.HookType, config *hooks.HookConfig) error // 注册单个钩子
+	UnregisterHook(hookType hooks.HookType, scriptPath string) error      // 注销钩子
+	GetHooks(hookType hooks.HookType) []*hooks.HookConfig                 // 获取指定类型的钩子
+	ClearHooks(hookType hooks.HookType)                                   // 清空指定类型的钩子
+	ClearAllHooks()                                                       // 清空所有钩子
 }
 
 // CommandRunner 命令运行器接口

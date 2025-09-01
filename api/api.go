@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mimicode/flutterbuilder/pkg/builder"
+	"github.com/mimicode/flutterbuilder/pkg/hooks"
 	"github.com/mimicode/flutterbuilder/pkg/logger"
 	"github.com/mimicode/flutterbuilder/pkg/types"
 )
@@ -23,12 +24,13 @@ type IOSConfig = types.IOSConfig
 
 // BuildConfig 构建配置
 type BuildConfig struct {
-	Platform   Platform               // 构建平台
-	SourcePath string                 // Flutter项目源代码路径
-	IOSConfig  *IOSConfig             // iOS配置（可选）
-	CustomArgs map[string]interface{} // 自定义构建参数
-	Logger     Logger                 // 日志接口（可选）
-	Verbose    bool                   // 是否显示详细日志
+	Platform    Platform               // 构建平台
+	SourcePath  string                 // Flutter项目源代码路径
+	IOSConfig   *IOSConfig             // iOS配置（可选）
+	CustomArgs  map[string]interface{} // 自定义构建参数
+	HooksConfig *hooks.HooksConfig     // 钩子配置（可选）
+	Logger      Logger                 // 日志接口（可选）
+	Verbose     bool                   // 是否显示详细日志
 }
 
 // BuildResult 构建结果
@@ -137,6 +139,22 @@ func (fb *flutterBuilderImpl) Build(config *BuildConfig) (*BuildResult, error) {
 		}
 	}
 
+	// 如果有钩子配置，需要传递给内部构建器
+	if config.HooksConfig != nil {
+		if hooksBuilder, ok := internalBuilder.(interface {
+			SetHooks(*hooks.HooksConfig) error
+		}); ok {
+			if err := hooksBuilder.SetHooks(config.HooksConfig); err != nil {
+				return &BuildResult{
+					Success:   false,
+					Platform:  config.Platform,
+					BuildTime: time.Since(startTime),
+					Error:     fmt.Errorf("设置钩子配置失败: %w", err),
+				}, fmt.Errorf("设置钩子配置失败: %w", err)
+			}
+		}
+	}
+
 	// 执行构建
 	err := internalBuilder.Run()
 	buildTime := time.Since(startTime)
@@ -202,9 +220,25 @@ func QuickBuild(platform Platform, sourcePath string) (*BuildResult, error) {
 	return builder.Build(config)
 }
 
+// QuickBuildWithHooks 带钩子的快速构建（便捷方法）
+func QuickBuildWithHooks(platform Platform, sourcePath string, hooksConfig *hooks.HooksConfig) (*BuildResult, error) {
+	builder := NewFlutterBuilder()
+	config := &BuildConfig{
+		Platform:    platform,
+		SourcePath:  sourcePath,
+		HooksConfig: hooksConfig,
+	}
+	return builder.Build(config)
+}
+
 // QuickBuildAPK 快速构建APK（便捷方法）
 func QuickBuildAPK(sourcePath string) (*BuildResult, error) {
 	return QuickBuild(PlatformAPK, sourcePath)
+}
+
+// QuickBuildAPKWithHooks 带钩子的快速构建 APK（便捷方法）
+func QuickBuildAPKWithHooks(sourcePath string, hooksConfig *hooks.HooksConfig) (*BuildResult, error) {
+	return QuickBuildWithHooks(PlatformAPK, sourcePath, hooksConfig)
 }
 
 // QuickBuildIOS 快速构建iOS（便捷方法）
@@ -214,6 +248,18 @@ func QuickBuildIOS(sourcePath string, iosConfig *IOSConfig) (*BuildResult, error
 		Platform:   PlatformIOS,
 		SourcePath: sourcePath,
 		IOSConfig:  iosConfig,
+	}
+	return builder.Build(config)
+}
+
+// QuickBuildIOSWithHooks 带钩子的快速构建 iOS（便捷方法）
+func QuickBuildIOSWithHooks(sourcePath string, iosConfig *IOSConfig, hooksConfig *hooks.HooksConfig) (*BuildResult, error) {
+	builder := NewFlutterBuilder()
+	config := &BuildConfig{
+		Platform:    PlatformIOS,
+		SourcePath:  sourcePath,
+		IOSConfig:   iosConfig,
+		HooksConfig: hooksConfig,
 	}
 	return builder.Build(config)
 }

@@ -313,3 +313,47 @@ iOS 证书管理器，处理动态证书配置。
 - 优化日志系统，支持外部日志库集成
 - 支持自定义构建参数传入
 - 完善 API 接口设计
+- **新增钩子系统**：支持在构建流程的每个阶段前后执行自定义 Dart 脚本
+
+## 钩子系统
+
+Flutter Builder 现在支持强大的钩子系统，允许在构建流程的各个阶段执行自定义脚本。
+
+### 快速开始
+
+```go
+import "github.com/mimicode/flutterbuilder/pkg/hooks"
+
+hooksConfig := &hooks.HooksConfig{
+    Hooks: map[hooks.HookType][]*hooks.HookConfig{
+        hooks.HookPreBuild: {
+            {
+                ScriptPath: "scripts/notify_start.dart",
+                Args:       []string{"build-starting"},
+            },
+        },
+        hooks.HookPostBuild: {
+            {
+                ScriptPath: "scripts/upload_artifact.dart",
+                Args:       []string{"--target", "production"},
+            },
+        },
+    },
+}
+
+// 使用钩子配置进行构建
+result, err := api.QuickBuildAPKWithHooks("/path/to/project", hooksConfig)
+```
+
+### 支持的钩子类型
+
+- `pre_clean` / `post_clean` - 清理前后
+- `pre_get_deps` / `post_get_deps` - 获取依赖前后
+- `pre_code_gen` / `post_code_gen` - 代码生成前后
+- `pre_security_check` / `post_security_check` - 安全检查前后
+- `pre_build` / `post_build` - 构建前后
+- `pre_post_process` / `post_post_process` - 后处理前后
+
+### 详细文档
+
+查看 [HOOKS.md](./HOOKS.md) 获取完整的钩子系统使用指南和示例。

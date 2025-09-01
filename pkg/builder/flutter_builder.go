@@ -10,6 +10,7 @@ import (
 
 	"github.com/mimicode/flutterbuilder/pkg/certificates"
 	"github.com/mimicode/flutterbuilder/pkg/executor"
+	"github.com/mimicode/flutterbuilder/pkg/hooks"
 	"github.com/mimicode/flutterbuilder/pkg/logger"
 	"github.com/mimicode/flutterbuilder/pkg/security"
 	"github.com/mimicode/flutterbuilder/pkg/types"
@@ -17,13 +18,14 @@ import (
 
 // FlutterBuilderImpl Flutter构建器实现
 type FlutterBuilderImpl struct {
-	platform    Platform
-	iosConfig   *IOSConfig
-	projectRoot string
-	executor    executor.CommandExecutor
-	security    security.SecurityChecker
-	certManager types.CertificateManager
-	customArgs  map[string]interface{} // 自定义构建参数
+	platform     Platform
+	iosConfig    *IOSConfig
+	projectRoot  string
+	executor     executor.CommandExecutor
+	security     security.SecurityChecker
+	certManager  types.CertificateManager
+	customArgs   map[string]interface{} // 自定义构建参数
+	hookExecutor hooks.HookExecutor     // 钩子执行器
 }
 
 // NewFlutterBuilder 创建新的Flutter构建器
@@ -32,12 +34,13 @@ func NewFlutterBuilder(platform string, iosConfig *IOSConfig, sourcePath string)
 	projectRoot := sourcePath
 
 	builder := &FlutterBuilderImpl{
-		platform:    Platform(platform),
-		iosConfig:   iosConfig,
-		projectRoot: projectRoot,
-		executor:    executor.NewCommandExecutor(),
-		security:    security.NewSecurityChecker(projectRoot),
-		customArgs:  make(map[string]interface{}), // 初始化自定义参数
+		platform:     Platform(platform),
+		iosConfig:    iosConfig,
+		projectRoot:  projectRoot,
+		executor:     executor.NewCommandExecutor(),
+		security:     security.NewSecurityChecker(projectRoot),
+		customArgs:   make(map[string]interface{}),       // 初始化自定义参数
+		hookExecutor: hooks.NewHookExecutor(projectRoot), // 初始化钩子执行器
 	}
 
 	// 如果是iOS平台且有证书配置，创建证书管理器
@@ -103,6 +106,11 @@ func (b *FlutterBuilderImpl) Run() error {
 
 // Clean 清理项目
 func (b *FlutterBuilderImpl) Clean() error {
+	// 执行前置钩子
+	if err := b.executeHooks(hooks.HookPreClean, "Clean"); err != nil {
+		return fmt.Errorf("清理前置钩子执行失败: %w", err)
+	}
+
 	logger.Info("[1/6] 清理构建缓存...")
 
 	// Flutter clean
@@ -118,11 +126,21 @@ func (b *FlutterBuilderImpl) Clean() error {
 		logger.Info("继续构建过程...")
 	}
 
+	// 执行后置钩子
+	if err := b.executeHooks(hooks.HookPostClean, "Clean"); err != nil {
+		return fmt.Errorf("清理后置钩子执行失败: %w", err)
+	}
+
 	return nil
 }
 
 // GetDependencies 获取依赖
 func (b *FlutterBuilderImpl) GetDependencies() error {
+	// 执行前置钩子
+	if err := b.executeHooks(hooks.HookPreGetDeps, "GetDependencies"); err != nil {
+		return fmt.Errorf("获取依赖前置钩子执行失败: %w", err)
+	}
+
 	logger.Info("[2/6] 获取项目依赖...")
 
 	if err := b.executor.RunCommand([]string{"flutter", "pub", "get"}, b.projectRoot); err != nil {
@@ -130,11 +148,22 @@ func (b *FlutterBuilderImpl) GetDependencies() error {
 	}
 
 	logger.Success("依赖获取成功")
+
+	// 执行后置钩子
+	if err := b.executeHooks(hooks.HookPostGetDeps, "GetDependencies"); err != nil {
+		return fmt.Errorf("获取依赖后置钩子执行失败: %w", err)
+	}
+
 	return nil
 }
 
 // RunCodeGeneration 运行代码生成
 func (b *FlutterBuilderImpl) RunCodeGeneration() error {
+	// 执行前置钩子
+	if err := b.executeHooks(hooks.HookPreCodeGen, "RunCodeGeneration"); err != nil {
+		return fmt.Errorf("代码生成前置钩子执行失败: %w", err)
+	}
+
 	logger.Info("[3/6] 运行代码生成...")
 
 	// 尝试运行build_runner，如果失败则忽略
@@ -148,37 +177,71 @@ func (b *FlutterBuilderImpl) RunCodeGeneration() error {
 		logger.Success("代码生成完成")
 	}
 
+	// 执行后置钩子
+	if err := b.executeHooks(hooks.HookPostCodeGen, "RunCodeGeneration"); err != nil {
+		return fmt.Errorf("代码生成后置钩子执行失败: %w", err)
+	}
+
 	return nil
 }
 
 // CheckSecurityConfig 检查安全配置
 func (b *FlutterBuilderImpl) CheckSecurityConfig() error {
-	logger.Info("[4/6] 检查安全配置...")
-
-	if b.platform == PlatformAPK {
-		return b.security.CheckAndroidSecurity()
-	} else if b.platform == PlatformIOS {
-		return b.security.CheckIOSSecurity()
+	// 执行前置钩子
+	if err := b.executeHooks(hooks.HookPreSecurityCheck, "CheckSecurityConfig"); err != nil {
+		return fmt.Errorf("安全检查前置钩子执行失败: %w", err)
 	}
 
-	return nil
+	logger.Info("[4/6] 检查安全配置...")
+
+	var checkErr error
+	if b.platform == PlatformAPK {
+		checkErr = b.security.CheckAndroidSecurity()
+	} else if b.platform == PlatformIOS {
+		checkErr = b.security.CheckIOSSecurity()
+	}
+
+	// 执行后置钩子
+	if err := b.executeHooks(hooks.HookPostSecurityCheck, "CheckSecurityConfig"); err != nil {
+		return fmt.Errorf("安全检查后置钩子执行失败: %w", err)
+	}
+
+	return checkErr
 }
 
 // Build 构建发布版本
 func (b *FlutterBuilderImpl) Build() error {
-	logger.Info("[5/6] 构建发布版本...")
-
-	if b.platform == PlatformAPK {
-		return b.buildAndroidAPK()
-	} else if b.platform == PlatformIOS {
-		return b.buildIOS()
+	// 执行前置钩子
+	if err := b.executeHooks(hooks.HookPreBuild, "Build"); err != nil {
+		return fmt.Errorf("构建前置钩子执行失败: %w", err)
 	}
 
-	return fmt.Errorf("不支持的平台: %s", b.platform)
+	logger.Info("[5/6] 构建发布版本...")
+
+	var buildErr error
+	if b.platform == PlatformAPK {
+		buildErr = b.buildAndroidAPK()
+	} else if b.platform == PlatformIOS {
+		buildErr = b.buildIOS()
+	} else {
+		buildErr = fmt.Errorf("不支持的平台: %s", b.platform)
+	}
+
+	// 执行后置钩子
+	if err := b.executeHooks(hooks.HookPostBuild, "Build"); err != nil {
+		return fmt.Errorf("构建后置钩子执行失败: %w", err)
+	}
+
+	return buildErr
 }
 
 // PostBuildProcessing 构建后处理
 func (b *FlutterBuilderImpl) PostBuildProcessing() error {
+	// 执行前置钩子
+	if err := b.executeHooks(hooks.HookPrePostProcess, "PostBuildProcessing"); err != nil {
+		return fmt.Errorf("后处理前置钩子执行失败: %w", err)
+	}
+
 	logger.Info("[6/6] 构建后处理...")
 
 	// 创建构建信息文件
@@ -188,6 +251,11 @@ func (b *FlutterBuilderImpl) PostBuildProcessing() error {
 
 	// 显示安全提醒
 	b.showSecurityReminders()
+
+	// 执行后置钩子
+	if err := b.executeHooks(hooks.HookPostPostProcess, "PostBuildProcessing"); err != nil {
+		return fmt.Errorf("后处理后置钩子执行失败: %w", err)
+	}
 
 	return nil
 }
@@ -249,6 +317,67 @@ func (b *FlutterBuilderImpl) GetCustomArgStringSlice(key string) []string {
 		}
 	}
 	return nil
+}
+
+// SetHooks 设置钩子配置
+func (b *FlutterBuilderImpl) SetHooks(hooksConfig *hooks.HooksConfig) error {
+	if hooksConfig == nil {
+		return fmt.Errorf("钩子配置不能为空")
+	}
+
+	// 清空现有钩子
+	b.hookExecutor.ClearAllHooks()
+
+	// 注册所有钩子
+	for hookType, configs := range hooksConfig.Hooks {
+		for _, config := range configs {
+			if err := b.hookExecutor.RegisterHook(hookType, config); err != nil {
+				return fmt.Errorf("注册钩子失败 [%s]: %w", hookType, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// RegisterHook 注册单个钩子
+func (b *FlutterBuilderImpl) RegisterHook(hookType hooks.HookType, config *hooks.HookConfig) error {
+	return b.hookExecutor.RegisterHook(hookType, config)
+}
+
+// UnregisterHook 注销钩子
+func (b *FlutterBuilderImpl) UnregisterHook(hookType hooks.HookType, scriptPath string) error {
+	return b.hookExecutor.UnregisterHook(hookType, scriptPath)
+}
+
+// GetHooks 获取指定类型的钩子
+func (b *FlutterBuilderImpl) GetHooks(hookType hooks.HookType) []*hooks.HookConfig {
+	return b.hookExecutor.GetHooks(hookType)
+}
+
+// ClearHooks 清空指定类型的钩子
+func (b *FlutterBuilderImpl) ClearHooks(hookType hooks.HookType) {
+	b.hookExecutor.ClearHooks(hookType)
+}
+
+// ClearAllHooks 清空所有钩子
+func (b *FlutterBuilderImpl) ClearAllHooks() {
+	b.hookExecutor.ClearAllHooks()
+}
+
+// executeHooks 执行指定类型的钩子
+func (b *FlutterBuilderImpl) executeHooks(hookType hooks.HookType, buildStage string) error {
+	context := &hooks.HookContext{
+		HookType:    hookType,
+		Platform:    string(b.platform),
+		ProjectRoot: b.projectRoot,
+		BuildStage:  buildStage,
+		StartTime:   time.Now(),
+		CustomArgs:  b.customArgs,
+	}
+
+	_, err := b.hookExecutor.ExecuteHooks(hookType, context)
+	return err
 }
 
 // removeSpecificArgs 移除指定的参数
