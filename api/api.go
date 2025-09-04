@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mimicode/flutterbuilder/pkg/artifact"
 	"github.com/mimicode/flutterbuilder/pkg/builder"
 	"github.com/mimicode/flutterbuilder/pkg/hooks"
 	"github.com/mimicode/flutterbuilder/pkg/logger"
@@ -22,24 +23,32 @@ const (
 // IOSConfig iOS构建配置
 type IOSConfig = types.IOSConfig
 
+// ArtifactValidationConfig 产物验证配置
+type ArtifactValidationConfig = artifact.ArtifactValidationConfig
+
 // BuildConfig 构建配置
 type BuildConfig struct {
-	Platform    Platform               // 构建平台
-	SourcePath  string                 // Flutter项目源代码路径
-	IOSConfig   *IOSConfig             // iOS配置（可选）
-	CustomArgs  map[string]interface{} // 自定义构建参数
-	HooksConfig *hooks.HooksConfig     // 钩子配置（可选）
-	Logger      Logger                 // 日志接口（可选）
-	Verbose     bool                   // 是否显示详细日志
+	Platform         Platform                   // 构建平台
+	SourcePath       string                     // Flutter项目源代码路径
+	IOSConfig        *IOSConfig                 // iOS配置（可选）
+	CustomArgs       map[string]interface{}     // 自定义构建参数
+	HooksConfig      *hooks.HooksConfig         // 钩子配置（可选）
+	Logger           Logger                     // 日志接口（可选）
+	Verbose          bool                       // 是否显示详细日志
+	ValidationConfig *ArtifactValidationConfig // 产物验证配置（可选）
 }
 
 // BuildResult 构建结果
 type BuildResult struct {
-	Success    bool          // 是否成功
-	Platform   Platform      // 构建平台
-	BuildTime  time.Duration // 构建耗时
-	OutputPath string        // 输出路径
-	Error      error         // 错误信息
+	Success          bool                         // 是否成功
+	Platform         Platform                     // 构建平台
+	BuildTime        time.Duration                // 构建耗时
+	OutputPath       string                       // 输出路径
+	Error            error                        // 错误信息
+	// 新增验证相关字段
+	ArtifactSize     int64                        // 产物文件大小
+	ValidationResult *artifact.ValidationResult   // 验证结果详情
+	Verified         bool                         // 是否通过验证
 }
 
 // Logger 日志接口
@@ -155,6 +164,15 @@ func (fb *flutterBuilderImpl) Build(config *BuildConfig) (*BuildResult, error) {
 		}
 	}
 
+	// 如果有验证配置，需要传递给内部构建器
+	if config.ValidationConfig != nil {
+		if validationBuilder, ok := internalBuilder.(interface {
+			SetValidationConfig(*artifact.ArtifactValidationConfig)
+		}); ok {
+			validationBuilder.SetValidationConfig(config.ValidationConfig)
+		}
+	}
+
 	// 执行构建
 	err := internalBuilder.Run()
 	buildTime := time.Since(startTime)
@@ -172,6 +190,35 @@ func (fb *flutterBuilderImpl) Build(config *BuildConfig) (*BuildResult, error) {
 
 	// 获取输出路径
 	result.OutputPath = getOutputPath(config.Platform, config.SourcePath, config.IOSConfig)
+
+	// 获取验证结果（如果可用）
+	if validationBuilder, ok := internalBuilder.(interface {
+		GetValidationConfig() *artifact.ArtifactValidationConfig
+	}); ok {
+		validationConfig := validationBuilder.GetValidationConfig()
+		if validationConfig != nil && validationConfig.EnableValidation {
+			// 创建验证器来获取验证结果
+			validator := artifact.NewArtifactValidator()
+			artifactConfig := &artifact.ArtifactConfig{
+				Platform:         convertPlatformForAPI(config.Platform),
+				SourcePath:       config.SourcePath,
+				ValidateIntegrity: true,
+				ValidationConfig: validationConfig,
+			}
+			if config.Platform == PlatformIOS && config.IOSConfig != nil {
+				artifactConfig.IOSConfig = config.IOSConfig
+			}
+
+			if validationResult, err := validator.ValidateArtifact(artifactConfig); err == nil {
+				result.ValidationResult = validationResult
+				result.Verified = validationResult.Success
+				result.ArtifactSize = validationResult.FileSize
+			} else {
+				// 验证失败，但不影响构建结果
+				result.Verified = false
+			}
+		}
+	}
 
 	return result, nil
 }
@@ -262,4 +309,51 @@ func QuickBuildIOSWithHooks(sourcePath string, iosConfig *IOSConfig, hooksConfig
 		HooksConfig: hooksConfig,
 	}
 	return builder.Build(config)
+}
+
+// QuickBuildWithValidation 带验证配置的快速构建（便捷方法）
+func QuickBuildWithValidation(platform Platform, sourcePath string, iosConfig *IOSConfig, validationConfig *ArtifactValidationConfig) (*BuildResult, error) {
+	builder := NewFlutterBuilder()
+	config := &BuildConfig{
+		Platform:         platform,
+		SourcePath:       sourcePath,
+		IOSConfig:        iosConfig,
+		ValidationConfig: validationConfig,
+	}
+	return builder.Build(config)
+}
+
+// QuickBuildAPKWithValidation 带验证配置的快速构建 APK（便捷方法）
+func QuickBuildAPKWithValidation(sourcePath string, validationConfig *ArtifactValidationConfig) (*BuildResult, error) {
+	return QuickBuildWithValidation(PlatformAPK, sourcePath, nil, validationConfig)
+}
+
+// QuickBuildIOSWithValidation 带验证配置的快速构建 iOS（便捷方法）
+func QuickBuildIOSWithValidation(sourcePath string, iosConfig *IOSConfig, validationConfig *ArtifactValidationConfig) (*BuildResult, error) {
+	return QuickBuildWithValidation(PlatformIOS, sourcePath, iosConfig, validationConfig)
+}
+
+// GetDefaultValidationConfig 获取默认验证配置（便捷方法）
+func GetDefaultValidationConfig() *ArtifactValidationConfig {
+	return artifact.GetDefaultValidationConfig()
+}
+
+// DisableValidationConfig 创建禁用验证的配置（便捷方法）
+func DisableValidationConfig() *ArtifactValidationConfig {
+	return &ArtifactValidationConfig{
+		EnableValidation:     false,
+		EnableIntegrityCheck: false,
+	}
+}
+
+// convertPlatformForAPI 将API平台转换为验证器平台
+func convertPlatformForAPI(platform Platform) artifact.Platform {
+	switch platform {
+	case PlatformAPK:
+		return artifact.PlatformAPK
+	case PlatformIOS:
+		return artifact.PlatformIOS
+	default:
+		return artifact.Platform(platform)
+	}
 }

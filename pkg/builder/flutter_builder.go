@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mimicode/flutterbuilder/pkg/artifact"
 	"github.com/mimicode/flutterbuilder/pkg/certificates"
 	"github.com/mimicode/flutterbuilder/pkg/executor"
 	"github.com/mimicode/flutterbuilder/pkg/hooks"
@@ -18,14 +19,16 @@ import (
 
 // FlutterBuilderImpl Flutter构建器实现
 type FlutterBuilderImpl struct {
-	platform     Platform
-	iosConfig    *IOSConfig
-	projectRoot  string
-	executor     executor.CommandExecutor
-	security     security.SecurityChecker
-	certManager  types.CertificateManager
-	customArgs   map[string]interface{} // 自定义构建参数
-	hookExecutor hooks.HookExecutor     // 钩子执行器
+	platform          Platform
+	iosConfig         *IOSConfig
+	projectRoot       string
+	executor          executor.CommandExecutor
+	security          security.SecurityChecker
+	certManager       types.CertificateManager
+	customArgs        map[string]interface{}             // 自定义构建参数
+	hookExecutor      hooks.HookExecutor                 // 钩子执行器
+	artifactValidator artifact.ArtifactValidator         // 产物验证器
+	validationConfig  *artifact.ArtifactValidationConfig // 验证配置
 }
 
 // NewFlutterBuilder 创建新的Flutter构建器
@@ -34,13 +37,15 @@ func NewFlutterBuilder(platform string, iosConfig *IOSConfig, sourcePath string)
 	projectRoot := sourcePath
 
 	builder := &FlutterBuilderImpl{
-		platform:     Platform(platform),
-		iosConfig:    iosConfig,
-		projectRoot:  projectRoot,
-		executor:     executor.NewCommandExecutor(),
-		security:     security.NewSecurityChecker(projectRoot),
-		customArgs:   make(map[string]interface{}),       // 初始化自定义参数
-		hookExecutor: hooks.NewHookExecutor(projectRoot), // 初始化钩子执行器
+		platform:          Platform(platform),
+		iosConfig:         iosConfig,
+		projectRoot:       projectRoot,
+		executor:          executor.NewCommandExecutor(),
+		security:          security.NewSecurityChecker(projectRoot),
+		customArgs:        make(map[string]interface{}),          // 初始化自定义参数
+		hookExecutor:      hooks.NewHookExecutor(projectRoot),    // 初始化钩子执行器
+		artifactValidator: artifact.NewArtifactValidator(),       // 初始化产物验证器
+		validationConfig:  artifact.GetDefaultValidationConfig(), // 默认验证配置
 	}
 
 	// 如果是iOS平台且有证书配置，创建证书管理器
@@ -373,6 +378,82 @@ func (b *FlutterBuilderImpl) ClearAllHooks() {
 	b.hookExecutor.ClearAllHooks()
 }
 
+// SetValidationConfig 设置验证配置
+func (b *FlutterBuilderImpl) SetValidationConfig(config *artifact.ArtifactValidationConfig) {
+	if config != nil {
+		b.validationConfig = config
+	} else {
+		b.validationConfig = artifact.GetDefaultValidationConfig()
+	}
+}
+
+// GetValidationConfig 获取当前验证配置
+func (b *FlutterBuilderImpl) GetValidationConfig() *artifact.ArtifactValidationConfig {
+	return b.validationConfig
+}
+
+// validateBuildArtifacts 验证构建产物
+func (b *FlutterBuilderImpl) validateBuildArtifacts() error {
+	logger.Info("[6/6] 验证构建产物...")
+
+	// 创建验证配置
+	config := &artifact.ArtifactConfig{
+		Platform:          convertPlatform(b.platform),
+		SourcePath:        b.projectRoot,
+		ValidateIntegrity: true,
+		ValidationConfig:  b.validationConfig,
+	}
+
+	// 如果是iOS平台，传递iOS配置
+	if b.platform == PlatformIOS && b.iosConfig != nil {
+		config.IOSConfig = &types.IOSConfig{
+			P12Cert:             b.iosConfig.P12Cert,
+			CertPassword:        b.iosConfig.CertPassword,
+			ProvisioningProfile: b.iosConfig.ProvisioningProfile,
+			TeamID:              b.iosConfig.TeamID,
+			BundleID:            b.iosConfig.BundleID,
+		}
+	}
+
+	// 执行验证
+	result, err := b.artifactValidator.ValidateArtifact(config)
+	if err != nil {
+		return fmt.Errorf("产物验证执行失败: %w", err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("产物验证失败: %s", result.Error)
+	}
+
+	// 记录验证详情
+	logger.Success("产物验证成功")
+	if result.ArtifactPath != "" {
+		logger.Printf("  文件路径: %s", result.ArtifactPath)
+	}
+	if result.FileSize > 0 {
+		logger.Printf("  文件大小: %.2f MB", float64(result.FileSize)/(1024*1024))
+	}
+
+	for _, detail := range result.ValidationDetails {
+		switch detail.Status {
+		case "success":
+			logger.Success("  ✓ %s", detail.Check)
+		case "failed":
+			if detail.Critical {
+				logger.Error("  ✗ %s: %s", detail.Check, detail.Message)
+			} else {
+				logger.Warning("  ⚠ %s: %s", detail.Check, detail.Message)
+			}
+		case "warning":
+			logger.Warning("  ⚠ %s: %s", detail.Check, detail.Message)
+		default:
+			logger.Info("  • %s: %s", detail.Check, detail.Message)
+		}
+	}
+
+	return nil
+}
+
 // executeHooks 执行指定类型的钩子
 func (b *FlutterBuilderImpl) executeHooks(hookType hooks.HookType, buildStage string) error {
 	context := &hooks.HookContext{
@@ -569,6 +650,12 @@ func (b *FlutterBuilderImpl) buildAndroidAPK() error {
 	}
 
 	logger.Success("Android APK构建完成")
+
+	// 验证构建产物
+	if err := b.validateBuildArtifacts(); err != nil {
+		return fmt.Errorf("构建产物验证失败: %w", err)
+	}
+
 	b.showAndroidBuildArtifacts()
 	return nil
 }
@@ -634,6 +721,12 @@ func (b *FlutterBuilderImpl) buildIOSOnly() error {
 	}
 
 	logger.Success("iOS构建完成")
+
+	// 验证构建产物
+	if err := b.validateBuildArtifacts(); err != nil {
+		return fmt.Errorf("构建产物验证失败: %w", err)
+	}
+
 	b.showIOSBuildArtifacts()
 	return nil
 }
@@ -705,6 +798,12 @@ func (b *FlutterBuilderImpl) buildIPA() error {
 	}
 
 	logger.Success("IPA文件生成完成")
+
+	// 验证构建产物
+	if err := b.validateBuildArtifacts(); err != nil {
+		return fmt.Errorf("构建产物验证失败: %w", err)
+	}
+
 	return nil
 }
 
@@ -835,4 +934,16 @@ func getArchitecture(platform Platform) string {
 		return "ARM64"
 	}
 	return "iOS Universal"
+}
+
+// convertPlatform 将构建器平台转换为验证器平台
+func convertPlatform(platform Platform) artifact.Platform {
+	switch platform {
+	case PlatformAPK:
+		return artifact.PlatformAPK
+	case PlatformIOS:
+		return artifact.PlatformIOS
+	default:
+		return artifact.Platform(platform)
+	}
 }

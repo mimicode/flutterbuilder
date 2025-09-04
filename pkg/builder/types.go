@@ -3,6 +3,7 @@ package builder
 import (
 	"time"
 
+	"github.com/mimicode/flutterbuilder/pkg/artifact"
 	"github.com/mimicode/flutterbuilder/pkg/hooks"
 	"github.com/mimicode/flutterbuilder/pkg/types"
 )
@@ -45,6 +46,9 @@ type FlutterBuilder interface {
 	GetHooks(hookType hooks.HookType) []*hooks.HookConfig                 // 获取指定类型的钩子
 	ClearHooks(hookType hooks.HookType)                                   // 清空指定类型的钩子
 	ClearAllHooks()                                                       // 清空所有钩子
+	// 验证相关方法
+	SetValidationConfig(config *artifact.ArtifactValidationConfig)       // 设置验证配置
+	GetValidationConfig() *artifact.ArtifactValidationConfig             // 获取验证配置
 }
 
 // CommandRunner 命令运行器接口
