@@ -14,4 +14,22 @@ type CertificateManager interface {
 	SetupCertificates() error
 	CleanupCertificates() error
 	CreateExportOptionsPlist() (string, error)
+	GetUniqueIdentifier() string
+	ForceCleanupAll() error
 }
+
+// CleanupResource 清理资源定义
+type CleanupResource struct {
+	Type        ResourceType
+	Path        string
+	Description string
+}
+
+type ResourceType int
+
+const (
+	ResourceKeychain ResourceType = iota
+	ResourceProvisioningProfile
+	ResourcePlistFile
+	ResourceTempDirectory
+)

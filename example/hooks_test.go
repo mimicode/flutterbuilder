@@ -3,13 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
+	"testing"
 	"time"
 
 	"github.com/mimicode/flutterbuilder/api"
 	"github.com/mimicode/flutterbuilder/pkg/hooks"
 )
 
-func main() {
+func TestHooks(t *testing.T) {
 	fmt.Println("Flutter Builder 钩子功能示例")
 	fmt.Println("==============================")
 

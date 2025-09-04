@@ -45,7 +45,15 @@ func NewFlutterBuilder(platform string, iosConfig *IOSConfig, sourcePath string)
 
 	// 如果是iOS平台且有证书配置，创建证书管理器
 	if platform == "ios" && iosConfig != nil {
-		builder.certManager = certificates.NewCertificateManager(iosConfig, projectRoot)
+		// 转换为 types.IOSConfig
+		typesIOSConfig := &types.IOSConfig{
+			P12Cert:             iosConfig.P12Cert,
+			CertPassword:        iosConfig.CertPassword,
+			ProvisioningProfile: iosConfig.ProvisioningProfile,
+			TeamID:              iosConfig.TeamID,
+			BundleID:            iosConfig.BundleID,
+		}
+		builder.certManager = certificates.NewCertificateManager(typesIOSConfig, projectRoot)
 	}
 
 	return builder
@@ -638,7 +646,12 @@ func (b *FlutterBuilderImpl) buildIPA() error {
 		if err := b.certManager.SetupCertificates(); err != nil {
 			return fmt.Errorf("设置iOS证书失败: %w", err)
 		}
-		defer b.certManager.CleanupCertificates()
+		// 使用 defer 确保无论是否成功都能清理资源
+		defer func() {
+			if err := b.certManager.ForceCleanupAll(); err != nil {
+				logger.Warning("清理证书资源时发生错误: %v", err)
+			}
+		}()
 	}
 
 	// 创建导出选项plist文件

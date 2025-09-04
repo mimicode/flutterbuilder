@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mimicode/flutterbuilder/pkg/executor"
@@ -16,18 +18,35 @@ import (
 
 // CertificateManagerImpl iOS证书管理器实现
 type CertificateManagerImpl struct {
-	iosConfig        *types.IOSConfig
-	projectRoot      string
-	executor         executor.CommandExecutor
-	tempKeychainPath string
+	iosConfig           *types.IOSConfig
+	projectRoot         string
+	executor            executor.CommandExecutor
+	uniqueIdentifier    string
+	cleanupRegistry     CleanupRegistry
+	tempKeychainPath    string
+	installedPPPath     string
+	tempPlistPath       string
+	cleanupRegistered   bool
 }
 
 // NewCertificateManager 创建新的证书管理器
 func NewCertificateManager(iosConfig *types.IOSConfig, projectRoot string) types.CertificateManager {
+	if iosConfig == nil {
+		return &CertificateManagerImpl{
+			projectRoot:     projectRoot,
+			executor:       executor.NewCommandExecutor(),
+			cleanupRegistry: NewCleanupRegistry(),
+		}
+	}
+	
+	generator := NewIdentifierGenerator(iosConfig.TeamID, iosConfig.BundleID)
+	
 	return &CertificateManagerImpl{
-		iosConfig:   iosConfig,
-		projectRoot: projectRoot,
-		executor:    executor.NewCommandExecutor(),
+		iosConfig:        iosConfig,
+		projectRoot:     projectRoot,
+		executor:        executor.NewCommandExecutor(),
+		uniqueIdentifier: generator.Generate(),
+		cleanupRegistry:  NewCleanupRegistry(),
 	}
 }
 
@@ -37,11 +56,20 @@ func (c *CertificateManagerImpl) SetupCertificates() error {
 		return nil
 	}
 
-	logger.Info("设置iOS证书和描述文件...")
+	logger.Info("设置iOS证书和描述文件 [标识符: %s]", c.uniqueIdentifier)
+
+	// 注册清理资源
+	if err := c.registerCleanupResources(); err != nil {
+		return fmt.Errorf("注册清理资源失败: %w", err)
+	}
+
+	// 设置信号处理器确保异常情况下的清理
+	c.setupSignalHandler()
 
 	// 设置P12证书
 	if c.iosConfig.P12Cert != "" && c.iosConfig.CertPassword != "" {
 		if err := c.setupTemporaryKeychain(); err != nil {
+			c.ForceCleanupAll() // 确保清理
 			return fmt.Errorf("设置临时钥匙串失败: %w", err)
 		}
 	}
@@ -49,6 +77,7 @@ func (c *CertificateManagerImpl) SetupCertificates() error {
 	// 安装描述文件
 	if c.iosConfig.ProvisioningProfile != "" {
 		if err := c.installProvisioningProfile(); err != nil {
+			c.ForceCleanupAll() // 确保清理
 			return fmt.Errorf("安装描述文件失败: %w", err)
 		}
 	}
@@ -58,24 +87,15 @@ func (c *CertificateManagerImpl) SetupCertificates() error {
 
 // CleanupCertificates 清理iOS证书配置
 func (c *CertificateManagerImpl) CleanupCertificates() error {
-	if c.tempKeychainPath == "" {
-		return nil
-	}
-
-	logger.Info("清理临时钥匙串...")
-
-	// 删除临时钥匙串
-	if _, err := os.Stat(c.tempKeychainPath); err == nil {
-		cleanupCmd := []string{"security", "delete-keychain", c.tempKeychainPath}
-		if err := c.executor.RunCommand(cleanupCmd, c.projectRoot); err != nil {
-			logger.Warning("清理临时钥匙串失败: %v", err)
-		} else {
-			logger.Success("临时钥匙串已删除")
-		}
-	}
-
-	c.tempKeychainPath = ""
-	return nil
+	startTime := time.Now()
+	logger.Info("开始清理证书资源 [标识符: %s]", c.uniqueIdentifier)
+	
+	defer func() {
+		duration := time.Since(startTime)
+		logger.Info("证书清理完成，耗时: %v [标识符: %s]", duration, c.uniqueIdentifier)
+	}()
+	
+	return c.ForceCleanupAll()
 }
 
 // CreateExportOptionsPlist 创建导出选项plist文件
@@ -85,11 +105,9 @@ func (c *CertificateManagerImpl) CreateExportOptionsPlist() (string, error) {
 	}
 
 	exportOptions := map[string]interface{}{
-		"method":         "app-store",
-		"teamID":         c.iosConfig.TeamID,
-		"uploadBitcode":  true,
-		"uploadSymbols":  true,
-		"compileBitcode": true,
+		"method":        "app-store",
+		"teamID":        c.iosConfig.TeamID,
+		"uploadSymbols": false,
 	}
 
 	// 如果指定了Bundle ID，添加签名配置
@@ -100,26 +118,72 @@ func (c *CertificateManagerImpl) CreateExportOptionsPlist() (string, error) {
 		}
 	}
 
-	// 创建临时plist文件
+	// 使用标识符创建临时plist文件
 	plistContent := c.dictToPlist(exportOptions)
-	tempPlist := filepath.Join(c.projectRoot, "build", "export_options.plist")
+	plistFileName := fmt.Sprintf("export_options_%s.plist", c.uniqueIdentifier)
+	c.tempPlistPath = filepath.Join(c.projectRoot, "build", plistFileName)
 
 	// 确保目录存在
-	if err := os.MkdirAll(filepath.Dir(tempPlist), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.tempPlistPath), 0755); err != nil {
 		return "", fmt.Errorf("创建目录失败: %w", err)
 	}
 
-	if err := os.WriteFile(tempPlist, []byte(plistContent), 0644); err != nil {
+	if err := os.WriteFile(c.tempPlistPath, []byte(plistContent), 0644); err != nil {
 		return "", fmt.Errorf("写入plist文件失败: %w", err)
 	}
 
-	return tempPlist, nil
+	return c.tempPlistPath, nil
+}
+
+// GetUniqueIdentifier 获取唯一标识符
+func (c *CertificateManagerImpl) GetUniqueIdentifier() string {
+	return c.uniqueIdentifier
+}
+
+// ForceCleanupAll 强制清理所有资源
+func (c *CertificateManagerImpl) ForceCleanupAll() error {
+	logger.Info("强制清理所有资源 [标识符: %s]", c.uniqueIdentifier)
+	
+	var errors []error
+	
+	// 清理临时钥匙串
+	if c.tempKeychainPath != "" {
+		if err := c.cleanupKeychain(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	
+	// 清理描述文件
+	if c.installedPPPath != "" {
+		if err := c.cleanupProvisioningProfile(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	
+	// 清理临时plist文件
+	if c.tempPlistPath != "" {
+		if err := os.Remove(c.tempPlistPath); err != nil && !os.IsNotExist(err) {
+			errors = append(errors, fmt.Errorf("删除临时plist文件失败: %w", err))
+		}
+	}
+	
+	// 从注册表中移除
+	if c.cleanupRegistry != nil {
+		c.cleanupRegistry.Cleanup(c.uniqueIdentifier)
+	}
+	
+	if len(errors) > 0 {
+		return fmt.Errorf("清理过程中发生错误: %v", errors)
+	}
+	
+	logger.Success("资源清理完成 [标识符: %s]", c.uniqueIdentifier)
+	return nil
 }
 
 // 私有方法实现
 func (c *CertificateManagerImpl) setupTemporaryKeychain() error {
-	// 生成临时钥匙串名称和密码
-	keychainName := fmt.Sprintf("flutter_build_%s.keychain", generateRandomString(8))
+	// 使用标识符生成钥匙串名称
+	keychainName := fmt.Sprintf("flutter_%s.keychain", c.uniqueIdentifier)
 	currentUser, err := user.Current()
 	if err != nil {
 		return fmt.Errorf("获取当前用户失败: %w", err)
@@ -190,13 +254,122 @@ func (c *CertificateManagerImpl) installProvisioningProfile() error {
 		return fmt.Errorf("创建描述文件目录失败: %w", err)
 	}
 
-	// 复制描述文件到系统目录
-	targetPath := filepath.Join(ppDir, filepath.Base(ppPath))
-	if err := copyFile(ppPath, targetPath); err != nil {
+	// 使用标识符命名描述文件
+	targetFileName := fmt.Sprintf("%s.mobileprovision", c.uniqueIdentifier)
+	c.installedPPPath = filepath.Join(ppDir, targetFileName)
+	if err := copyFile(ppPath, c.installedPPPath); err != nil {
 		return fmt.Errorf("复制描述文件失败: %w", err)
 	}
 
-	logger.Success("描述文件安装成功: %s", filepath.Base(ppPath))
+	logger.Success("描述文件安装成功: %s", targetFileName)
+	return nil
+}
+
+// setupSignalHandler 设置信号处理器
+func (c *CertificateManagerImpl) setupSignalHandler() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	
+	go func() {
+		<-sigChan
+		logger.Warning("接收到终止信号，正在清理资源...")
+		c.ForceCleanupAll()
+		os.Exit(1)
+	}()
+}
+
+// registerCleanupResources 注册清理资源
+func (c *CertificateManagerImpl) registerCleanupResources() error {
+	if c.cleanupRegistered {
+		return nil
+	}
+	
+	var resources []types.CleanupResource
+	
+	// 注册钥匙串资源
+	if c.iosConfig.P12Cert != "" {
+		keychainName := fmt.Sprintf("flutter_%s.keychain", c.uniqueIdentifier)
+		currentUser, err := user.Current()
+		if err != nil {
+			return fmt.Errorf("获取当前用户失败: %w", err)
+		}
+		keychainPath := filepath.Join(currentUser.HomeDir, "Library", "Keychains", keychainName)
+		
+		resources = append(resources, types.CleanupResource{
+			Type:        types.ResourceKeychain,
+			Path:        keychainPath,
+			Description: "临时钥匙串",
+		})
+	}
+	
+	// 注册描述文件资源
+	if c.iosConfig.ProvisioningProfile != "" {
+		currentUser, err := user.Current()
+		if err != nil {
+			return fmt.Errorf("获取当前用户失败: %w", err)
+		}
+		ppPath := filepath.Join(currentUser.HomeDir, "Library", "MobileDevice", "Provisioning Profiles", fmt.Sprintf("%s.mobileprovision", c.uniqueIdentifier))
+		
+		resources = append(resources, types.CleanupResource{
+			Type:        types.ResourceProvisioningProfile,
+			Path:        ppPath,
+			Description: "描述文件",
+		})
+	}
+	
+	// 注册 plist 文件资源
+	plistPath := filepath.Join(c.projectRoot, "build", fmt.Sprintf("export_options_%s.plist", c.uniqueIdentifier))
+	resources = append(resources, types.CleanupResource{
+		Type:        types.ResourcePlistFile,
+		Path:        plistPath,
+		Description: "导出选项文件",
+	})
+	
+	// 注册到清理注册表
+	if err := c.cleanupRegistry.Register(c.uniqueIdentifier, resources); err != nil {
+		return fmt.Errorf("注册清理资源失败: %w", err)
+	}
+	
+	c.cleanupRegistered = true
+	return nil
+}
+
+// cleanupKeychain 清理钥匙串
+func (c *CertificateManagerImpl) cleanupKeychain() error {
+	// 检查钥匙串文件是否存在
+	if _, err := os.Stat(c.tempKeychainPath); os.IsNotExist(err) {
+		return nil // 文件不存在，无需清理
+	}
+	
+	// 使用 security 命令删除钥匙串
+	cleanupCmd := []string{"security", "delete-keychain", c.tempKeychainPath}
+	if err := c.executor.RunCommand(cleanupCmd, c.projectRoot); err != nil {
+		logger.Warning("删除钥匙串失败: %s, 错误: %v", c.tempKeychainPath, err)
+		// 尝试直接删除文件
+		if removeErr := os.Remove(c.tempKeychainPath); removeErr != nil {
+			return fmt.Errorf("删除钥匙串文件失败: %w", removeErr)
+		}
+	}
+	
+	logger.Info("已删除钥匙串: %s", c.tempKeychainPath)
+	c.tempKeychainPath = ""
+	return nil
+}
+
+// cleanupProvisioningProfile 清理描述文件
+func (c *CertificateManagerImpl) cleanupProvisioningProfile() error {
+	// 检查描述文件是否存在
+	if _, err := os.Stat(c.installedPPPath); os.IsNotExist(err) {
+		return nil // 文件不存在，无需清理
+	}
+	
+	// 直接删除描述文件
+	if err := os.Remove(c.installedPPPath); err != nil {
+		return fmt.Errorf("删除描述文件失败: %w", err)
+	}
+	
+	logger.Info("已删除描述文件: %s", c.installedPPPath)
+	c.installedPPPath = ""
 	return nil
 }
 
