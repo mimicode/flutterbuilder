@@ -68,6 +68,7 @@ func (c *CertificateManagerImpl) SetupCertificates() error {
 
 	// 设置P12证书
 	if c.iosConfig.P12Cert != "" && c.iosConfig.CertPassword != "" {
+		c.ForceCleanupAll() // 先清理历史残留
 		if err := c.setupTemporaryKeychain(); err != nil {
 			c.ForceCleanupAll() // 确保清理
 			return fmt.Errorf("设置临时钥匙串失败: %w", err)
