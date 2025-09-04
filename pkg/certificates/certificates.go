@@ -18,15 +18,15 @@ import (
 
 // CertificateManagerImpl iOS证书管理器实现
 type CertificateManagerImpl struct {
-	iosConfig           *types.IOSConfig
-	projectRoot         string
-	executor            executor.CommandExecutor
-	uniqueIdentifier    string
-	cleanupRegistry     CleanupRegistry
-	tempKeychainPath    string
-	installedPPPath     string
-	tempPlistPath       string
-	cleanupRegistered   bool
+	iosConfig         *types.IOSConfig
+	projectRoot       string
+	executor          executor.CommandExecutor
+	uniqueIdentifier  string
+	cleanupRegistry   CleanupRegistry
+	tempKeychainPath  string
+	installedPPPath   string
+	tempPlistPath     string
+	cleanupRegistered bool
 }
 
 // NewCertificateManager 创建新的证书管理器
@@ -34,17 +34,17 @@ func NewCertificateManager(iosConfig *types.IOSConfig, projectRoot string) types
 	if iosConfig == nil {
 		return &CertificateManagerImpl{
 			projectRoot:     projectRoot,
-			executor:       executor.NewCommandExecutor(),
+			executor:        executor.NewCommandExecutor(),
 			cleanupRegistry: NewCleanupRegistry(),
 		}
 	}
-	
+
 	generator := NewIdentifierGenerator(iosConfig.TeamID, iosConfig.BundleID)
-	
+
 	return &CertificateManagerImpl{
 		iosConfig:        iosConfig,
-		projectRoot:     projectRoot,
-		executor:        executor.NewCommandExecutor(),
+		projectRoot:      projectRoot,
+		executor:         executor.NewCommandExecutor(),
 		uniqueIdentifier: generator.Generate(),
 		cleanupRegistry:  NewCleanupRegistry(),
 	}
@@ -89,12 +89,12 @@ func (c *CertificateManagerImpl) SetupCertificates() error {
 func (c *CertificateManagerImpl) CleanupCertificates() error {
 	startTime := time.Now()
 	logger.Info("开始清理证书资源 [标识符: %s]", c.uniqueIdentifier)
-	
+
 	defer func() {
 		duration := time.Since(startTime)
 		logger.Info("证书清理完成，耗时: %v [标识符: %s]", duration, c.uniqueIdentifier)
 	}()
-	
+
 	return c.ForceCleanupAll()
 }
 
@@ -114,7 +114,7 @@ func (c *CertificateManagerImpl) CreateExportOptionsPlist() (string, error) {
 	if c.iosConfig.BundleID != "" {
 		exportOptions["signingStyle"] = "manual"
 		exportOptions["provisioningProfiles"] = map[string]string{
-			c.iosConfig.BundleID: c.getProvisioningProfileName(),
+			c.iosConfig.BundleID: c.GetUniqueIdentifier(),
 		}
 	}
 
@@ -143,39 +143,39 @@ func (c *CertificateManagerImpl) GetUniqueIdentifier() string {
 // ForceCleanupAll 强制清理所有资源
 func (c *CertificateManagerImpl) ForceCleanupAll() error {
 	logger.Info("强制清理所有资源 [标识符: %s]", c.uniqueIdentifier)
-	
+
 	var errors []error
-	
+
 	// 清理临时钥匙串
 	if c.tempKeychainPath != "" {
 		if err := c.cleanupKeychain(); err != nil {
 			errors = append(errors, err)
 		}
 	}
-	
+
 	// 清理描述文件
 	if c.installedPPPath != "" {
 		if err := c.cleanupProvisioningProfile(); err != nil {
 			errors = append(errors, err)
 		}
 	}
-	
+
 	// 清理临时plist文件
 	if c.tempPlistPath != "" {
 		if err := os.Remove(c.tempPlistPath); err != nil && !os.IsNotExist(err) {
 			errors = append(errors, fmt.Errorf("删除临时plist文件失败: %w", err))
 		}
 	}
-	
+
 	// 从注册表中移除
 	if c.cleanupRegistry != nil {
 		c.cleanupRegistry.Cleanup(c.uniqueIdentifier)
 	}
-	
+
 	if len(errors) > 0 {
 		return fmt.Errorf("清理过程中发生错误: %v", errors)
 	}
-	
+
 	logger.Success("资源清理完成 [标识符: %s]", c.uniqueIdentifier)
 	return nil
 }
@@ -190,7 +190,7 @@ func (c *CertificateManagerImpl) setupTemporaryKeychain() error {
 	}
 
 	c.tempKeychainPath = filepath.Join(currentUser.HomeDir, "Library", "Keychains", keychainName)
-	keychainPassword := generateRandomString(16)
+	keychainPassword := c.iosConfig.CertPassword
 
 	logger.Info("创建临时钥匙串: %s", keychainName)
 
@@ -215,6 +215,9 @@ func (c *CertificateManagerImpl) setupTemporaryKeychain() error {
 
 	// 解析当前钥匙串列表
 	currentKeychains := parseKeychainList(output)
+	if len(currentKeychains) > 0 {
+		logger.Info("当前钥匙串列表:\n%s", strings.Join(currentKeychains, "\n"))
+	}
 
 	// 添加临时钥匙串到搜索列表
 	newKeychains := append([]string{c.tempKeychainPath}, currentKeychains...)
@@ -269,7 +272,7 @@ func (c *CertificateManagerImpl) installProvisioningProfile() error {
 func (c *CertificateManagerImpl) setupSignalHandler() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	
+
 	go func() {
 		<-sigChan
 		logger.Warning("接收到终止信号，正在清理资源...")
@@ -283,9 +286,9 @@ func (c *CertificateManagerImpl) registerCleanupResources() error {
 	if c.cleanupRegistered {
 		return nil
 	}
-	
+
 	var resources []types.CleanupResource
-	
+
 	// 注册钥匙串资源
 	if c.iosConfig.P12Cert != "" {
 		keychainName := fmt.Sprintf("flutter_%s.keychain", c.uniqueIdentifier)
@@ -294,14 +297,14 @@ func (c *CertificateManagerImpl) registerCleanupResources() error {
 			return fmt.Errorf("获取当前用户失败: %w", err)
 		}
 		keychainPath := filepath.Join(currentUser.HomeDir, "Library", "Keychains", keychainName)
-		
+
 		resources = append(resources, types.CleanupResource{
 			Type:        types.ResourceKeychain,
 			Path:        keychainPath,
 			Description: "临时钥匙串",
 		})
 	}
-	
+
 	// 注册描述文件资源
 	if c.iosConfig.ProvisioningProfile != "" {
 		currentUser, err := user.Current()
@@ -309,14 +312,14 @@ func (c *CertificateManagerImpl) registerCleanupResources() error {
 			return fmt.Errorf("获取当前用户失败: %w", err)
 		}
 		ppPath := filepath.Join(currentUser.HomeDir, "Library", "MobileDevice", "Provisioning Profiles", fmt.Sprintf("%s.mobileprovision", c.uniqueIdentifier))
-		
+
 		resources = append(resources, types.CleanupResource{
 			Type:        types.ResourceProvisioningProfile,
 			Path:        ppPath,
 			Description: "描述文件",
 		})
 	}
-	
+
 	// 注册 plist 文件资源
 	plistPath := filepath.Join(c.projectRoot, "build", fmt.Sprintf("export_options_%s.plist", c.uniqueIdentifier))
 	resources = append(resources, types.CleanupResource{
@@ -324,12 +327,12 @@ func (c *CertificateManagerImpl) registerCleanupResources() error {
 		Path:        plistPath,
 		Description: "导出选项文件",
 	})
-	
+
 	// 注册到清理注册表
 	if err := c.cleanupRegistry.Register(c.uniqueIdentifier, resources); err != nil {
 		return fmt.Errorf("注册清理资源失败: %w", err)
 	}
-	
+
 	c.cleanupRegistered = true
 	return nil
 }
@@ -340,7 +343,7 @@ func (c *CertificateManagerImpl) cleanupKeychain() error {
 	if _, err := os.Stat(c.tempKeychainPath); os.IsNotExist(err) {
 		return nil // 文件不存在，无需清理
 	}
-	
+
 	// 使用 security 命令删除钥匙串
 	cleanupCmd := []string{"security", "delete-keychain", c.tempKeychainPath}
 	if err := c.executor.RunCommand(cleanupCmd, c.projectRoot); err != nil {
@@ -350,7 +353,7 @@ func (c *CertificateManagerImpl) cleanupKeychain() error {
 			return fmt.Errorf("删除钥匙串文件失败: %w", removeErr)
 		}
 	}
-	
+
 	logger.Info("已删除钥匙串: %s", c.tempKeychainPath)
 	c.tempKeychainPath = ""
 	return nil
@@ -362,22 +365,15 @@ func (c *CertificateManagerImpl) cleanupProvisioningProfile() error {
 	if _, err := os.Stat(c.installedPPPath); os.IsNotExist(err) {
 		return nil // 文件不存在，无需清理
 	}
-	
+
 	// 直接删除描述文件
 	if err := os.Remove(c.installedPPPath); err != nil {
 		return fmt.Errorf("删除描述文件失败: %w", err)
 	}
-	
+
 	logger.Info("已删除描述文件: %s", c.installedPPPath)
 	c.installedPPPath = ""
 	return nil
-}
-
-func (c *CertificateManagerImpl) getProvisioningProfileName() string {
-	if c.iosConfig.ProvisioningProfile == "" {
-		return ""
-	}
-	return strings.TrimSuffix(filepath.Base(c.iosConfig.ProvisioningProfile), filepath.Ext(c.iosConfig.ProvisioningProfile))
 }
 
 func (c *CertificateManagerImpl) dictToPlist(data map[string]interface{}) string {
@@ -414,16 +410,6 @@ func (c *CertificateManagerImpl) dictToPlist(data map[string]interface{}) string
 
 	plistLines = append(plistLines, `</dict>`, `</plist>`)
 	return strings.Join(plistLines, "\n")
-}
-
-// 辅助函数
-func generateRandomString(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	result := make([]byte, length)
-	for i := range result {
-		result[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-	}
-	return string(result)
 }
 
 func parseKeychainList(output string) []string {
